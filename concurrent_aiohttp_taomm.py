@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 
 FIRST_PAGE = 1
 TIMEOUT = 60
+CONCURRENT_LEVEL = 20
 MAX_USER_PAGE = 2
 MAX_ALBUM_PAGE = 2
 MAX_PHOTO_PAGE = 2
@@ -214,7 +215,7 @@ class Manager:
     def __init__(self, loop):
         self._users = []
         self._loop = loop
-        self._session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=20))
+        self._session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=CONCURRENT_LEVEL))
 
     async def __await__(self):
         await self.get_users()
