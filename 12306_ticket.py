@@ -1,21 +1,20 @@
 """12306 tickets query system by CLI
 
 Usage:
-    tickets.py [-gdtkz] [-as] <from> <to> [<date>]
+    tickets.py query [options] FROM TO [DATE]
+    tickets.py dump
     tickets.py -v | --version
     tickets.py -h | --help
-    tickets.py --dump
+
 
 Arguments:
-  <from>            出发站
-  <to>              到达站
-  <date>            出发日期
+    FROM            出发站
+    TO              到达站
+    DATE            出发日期
 
 Options:
     -h, --help      帮助
     -v, --version   版本
-
-    --dump          显示站名表
 
     -a, --adult     成人票
     -s, --student   学生票
@@ -34,15 +33,17 @@ Examples:
 import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
-
 import logging
 import re
 import datetime
+import json
 import docopt
 import prettytable
 
-query_url = 'https://kyfw.12306.cn/otn/leftTicket/queryT?' \
+# get rid of the ssl warning
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+query_url = 'https://kyfw.12306.cn/otn/leftTicket/query?' \
             'leftTicketDTO.train_date={}&' \
             'leftTicketDTO.from_station={}&' \
             'leftTicketDTO.to_station={}&' \
@@ -139,11 +140,11 @@ def table_output(headers, data):
 
 def cli():
     arguments = docopt.docopt(__doc__, version='1.0')
-    from_station = arguments['<from>']
-    to_station = arguments['<to>']
-    date = arguments.get('<date>') or datetime.date.today()
+    from_station = arguments['FROM']
+    to_station = arguments['TO']
+    date = arguments.get('DATE') or datetime.date.today()
     flag = []
-    dump = arguments['--dump']
+    dump = arguments['dump']
 
     if arguments['-g']:
         flag.append('G')
@@ -159,10 +160,8 @@ def cli():
     if not flag:
         flag = list('GDTKZ')
 
-    pessenger = ''
-    if arguments['--adult']:
-        pessenger = 'ADULT'
-    elif arguments['--student']:
+    pessenger = 'ADULT'
+    if arguments['--student']:
         pessenger = '0X00'
 
     # get station mapping
@@ -185,17 +184,17 @@ def cli():
             r.raise_for_status()
             json_data = r.json()
 
-            x = [TrainItem(item['queryLeftNewDTO']).output()
-                 for item in json_data['data']
-                 if item['queryLeftNewDTO']['station_train_code'][0] in flag]
+            raw_data = [TrainItem(item['queryLeftNewDTO']).output()
+                        for item in json_data['data']
+                        if item['queryLeftNewDTO']['station_train_code'][0] in flag]
 
-            table_output(table_header, x)
-
+            table_output(table_header, raw_data)
         except requests.HTTPError:
-            logging.exception('Make query failed.')
+            logging.exception('Make http query failed.')
         except KeyError:
             logging.exception('Query location not found.')
-
+        except json.JSONDecodeError:
+            logging.exception('json data parsed error.')
 
 if __name__ == '__main__':
     cli()
