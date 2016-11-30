@@ -3,6 +3,8 @@
 Python version: > 3.4
 Dependence: aiohttp async_timeout requests BeautifulSoup
 
+asyncio协程版本
+
 爬虫类
 从淘女郎网站（https://mm.taobao.com）获取图片链接并下载，按照地区、相册名、姓名分类
 """
@@ -72,11 +74,11 @@ class Photo:
 
     async def done(self):
         # 获取image内容
-        image = await self.fetch(self._url)
+        # image = await self.fetch(self._url)
         print(self)
 
         # 开线程保存到文件
-        await self._session.loop.run_in_executor(None, self.save, image)
+        # await self._session.loop.run_in_executor(None, self.save, image)
 
     async def fetch(self, url):
         with async_timeout.timeout(TIMEOUT):
@@ -156,7 +158,7 @@ class Album:
         pages = await self.get_page_nums()
 
         # 获取照片列表
-        tasks = [self.get_photo_by_page(page + 1) for page in range(min(MAX_PHOTO_PAGE, pages) or pages)]
+        tasks = [self.get_photo_by_page(page + 1) for page in range(min(MAX_PHOTO_PAGE, pages))]
         for task in asyncio.as_completed(tasks):
             photo_items = await task
             for photo in photo_items:
