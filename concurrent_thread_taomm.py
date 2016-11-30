@@ -44,7 +44,27 @@ album_list = 'https://mm.taobao.com/self/album/open_album_list.htm?user_id={}&pa
 photo_list = 'https://mm.taobao.com/album/json/get_album_photo_list.htm?user_id={}&album_id={}&page={}'
 
 
+class Parser(threading.Thread):
+    def __init__(self, func, *args, **kwargs):
+        super(Parser, self).__init__()
+        self._func = func
+        self._args = args
+        self._kwargs = kwargs
+        self._result = []
+
+    def run(self):
+        self._result = self._func(*self._args, **self._kwargs)
+
+    def result(self):
+        return self._result
+
+    def __repr__(self):
+        return '<Parser({})>'.format(threading.get_ident())
+
+
 class Photo(threading.Thread):
+    g_count = 0
+
     def __init__(self, id, url, album_name, user_name, location, session):
         super(Photo, self).__init__()
         self._id = id
@@ -60,6 +80,7 @@ class Photo(threading.Thread):
         pass
         # image = self.fetch(self._url)
         print(self)
+        Photo.g_count += 1
         # self.save(image)
 
     def fetch(self, url):
@@ -128,6 +149,18 @@ class Album(threading.Thread):
         pages = self.get_page_nums()
 
         # 获取照片列表
+        # tasks = []
+        # for page in range(min(MAX_PHOTO_PAGE, pages)):
+        #     parser = Parser(self.get_photo_by_page, page + 1)
+        #     tasks.append(parser)
+        #     parser.start()
+        #
+        # for parser in tasks:
+        #     parser.join()
+        #     for photo in parser.result():
+        #         self._photos.append(photo)
+        #         photo.start()
+
         for page in range(min(MAX_PHOTO_PAGE, pages)):
             photo_items = self.get_photo_by_page(page + 1)
             for photo in photo_items:
@@ -213,6 +246,18 @@ class User(threading.Thread):
         pages = self.get_page_nums()
 
         # 获取相册列表
+        # tasks = []
+        # for page in range(min(MAX_ALBUM_PAGE, pages)):
+        #     parser = Parser(self.get_album_by_page, page + 1)
+        #     tasks.append(parser)
+        #     parser.start()
+        #
+        # for parser in tasks:
+        #     parser.join()
+        #     for album in parser.result():
+        #         self._albums.append(album)
+        #         album.start()
+
         for page in range(min(MAX_ALBUM_PAGE, pages)):
             album_items = self.get_album_by_page(page + 1)
             for album in album_items:
@@ -262,6 +307,18 @@ class Manager(threading.Thread):
         pages = self.get_user_pages()
 
         # 获取用户列表
+        # tasks = []
+        # for page in range(min(MAX_USER_PAGE, pages)):
+        #     parser = Parser(self.get_user_by_page, page + 1)
+        #     tasks.append(parser)
+        #     parser.start()
+        #
+        # for parser in tasks:
+        #     parser.join()
+        #     for user in parser.result():
+        #         self._users.append(user)
+        #         user.start()
+
         for page in range(min(MAX_USER_PAGE, pages)):
             user_items = self.get_user_by_page(page + 1)
             for user in user_items:
@@ -317,3 +374,4 @@ if __name__ == '__main__':
         manager = Manager()
         manager.start()
         manager.join()
+    print('{} photos fetched.'.format(Photo.g_count))

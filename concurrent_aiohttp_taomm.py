@@ -59,6 +59,8 @@ def timer():
 
 
 class Photo:
+    g_count = 0
+
     def __init__(self, id, url, album_name, user_name, location, session):
         self._id = id
         self._url = 'https:' + url
@@ -76,6 +78,7 @@ class Photo:
         # 获取image内容
         # image = await self.fetch(self._url)
         print(self)
+        Photo.g_count += 1
 
         # 开线程保存到文件
         # await self._session.loop.run_in_executor(None, self.save, image)
@@ -335,3 +338,4 @@ if __name__ == '__main__':
         manager = Manager(loop)
         loop.run_until_complete(manager)
     loop.close()
+    print('{} photos fetched.'.format(Photo.g_count))
