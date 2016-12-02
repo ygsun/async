@@ -33,7 +33,7 @@ MAX_ALBUM_PAGE = 1
 MAX_PHOTO_PAGE = 1
 
 # 进程池chunksize
-CHUNK_SIZE = 1
+CHUNK_SIZE = 100
 
 # 淘女郎列表页面
 user_list = 'https://mm.taobao.com/json/request_top_list.htm?page={}'
@@ -126,20 +126,20 @@ class Album:
 
 
 class User:
-    def __init__(self, id):
-        self._id = id
-        self._name = ''
+    def __init__(self, user_id):
+        self._user_id = user_id
+        self._user_name = ''
         self._location = ''
         self._albums = []
 
     def get_album_pages(self):
         # get users list page nums
-        album_list_url = album_list.format(self._id, FIRST_PAGE)
+        album_list_url = album_list.format(self._user_id, FIRST_PAGE)
         resp = self.fetch(album_list_url)
         return self.parse_page_nums(resp)
 
     def get_album_by_page(self, page):
-        album_list_url = album_list.format(self._id, page)
+        album_list_url = album_list.format(self._user_id, page)
         resp = self.fetch(album_list_url)
         return self.parse_album_id(resp)
 
@@ -156,7 +156,7 @@ class User:
 
     def parse_user_info(self, resp):
         soup = BeautifulSoup(resp, 'html.parser')
-        self._name = soup.find('ul', class_='mm-p-info-cell clearfix').li.span.text
+        self._user_name = soup.find('ul', class_='mm-p-info-cell clearfix').li.span.text
         self._location = soup.find('li', class_='mm-p-cell-right').span.text
 
     def parse_album_id(self, resp):
@@ -171,16 +171,16 @@ class User:
             if match:
                 album_id = match.group(1)
                 album_name = tag.text.strip().replace('.', '').strip()
-                album_ids.append((album_id, album_name, self._id, self._name, self._location))
+                album_ids.append((album_id, album_name, self._user_id, self._user_name, self._location))
         return album_ids
 
     def get_info(self):
-        user_info_url = user_info.format(self._id)
+        user_info_url = user_info.format(self._user_id)
         resp = self.fetch(user_info_url)
         self.parse_user_info(resp)
 
     def __repr__(self):
-        return '<User(id={} name={})>'.format(self._id, self._name)
+        return '<User(id={} name={})>'.format(self._user_id, self._user_name)
 
 
 class Manager:
@@ -211,7 +211,7 @@ class Manager:
         pages = Manager.get_user_pages()
 
         # 并发获取内容
-        return pool.map(Manager.get_user_by_page, range(1, min(MAX_USER_PAGE, pages) + 1))
+        return pool.map(Manager.get_user_by_page, range(1, min(MAX_USER_PAGE, pages) + 1), chunksize=CHUNK_SIZE)
 
     @staticmethod
     def get_albums(user_id):
@@ -225,7 +225,7 @@ class Manager:
         pages = user.get_album_pages()
 
         # 并发获取内容
-        return pool.map(user.get_album_by_page, range(1, min(MAX_ALBUM_PAGE, pages) + 1))
+        return pool.map(user.get_album_by_page, range(1, min(MAX_ALBUM_PAGE, pages) + 1), chunksize=CHUNK_SIZE)
 
     @staticmethod
     def get_photos(album_id, album_name, user_id, user_name, location):
@@ -236,7 +236,7 @@ class Manager:
         pages = album.get_photo_pages()
 
         # 并发获取内容
-        return pool.map(album.get_photo_by_page, range(1, min(MAX_PHOTO_PAGE, pages) + 1))
+        return pool.map(album.get_photo_by_page, range(1, min(MAX_PHOTO_PAGE, pages) + 1), chunksize=CHUNK_SIZE)
 
     @staticmethod
     def save_photos(photo_id, photo_url, album_name, user_name, location):
