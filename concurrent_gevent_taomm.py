@@ -1,34 +1,32 @@
 #!/usr/bin/env python3
 """
-Python version: > 3.4
-Dependence: aiohttp async_timeout requests BeautifulSoup
+Python version: > 2.7
+Dependence: gevent greenlet requests BeautifulSoup
 
-asyncio协程版本
+gevent协程版本
 
 爬虫类
 从淘女郎网站（https://mm.taobao.com）获取图片链接并下载，按照地区、相册名、姓名分类
 """
 
+import gevent
+import sys
+from gevent import monkey
+
+monkey.patch_all()
+
+import requests
+
 import contextlib
 import os
 import re
 import json
-import aiohttp
-import asyncio
-import async_timeout
 import time
-import sys
 
 from bs4 import BeautifulSoup
 
 # 第一页
 FIRST_PAGE = 1
-
-# 抓取资源超时
-TIMEOUT = 60
-
-# session TCP连接数
-CONCURRENT_LEVEL = 20
 
 # 需要抓取的最大用户页数
 MAX_USER_PAGE = 2
@@ -59,10 +57,11 @@ def timer(title='default'):
     print('{}::{:.3f}s'.format(title, time.time() - start))
 
 
-class Photo:
+class Photo(gevent.Greenlet):
     g_count = 0
 
     def __init__(self, id, url, album_name, user_name, location, session):
+        super(Photo, self).__init__()
         self._id = id
         self._url = 'https:' + url
         self._user_name = user_name
@@ -72,10 +71,7 @@ class Photo:
         self._path = os.path.join(os.getcwd(), 'taomm', self._location, self._user_name, self._album_name)
         os.makedirs(self._path, exist_ok=True)
 
-    def __await__(self):
-        return self.done().__await__()
-
-    async def done(self):
+    def _run(self):
         # 获取image内容
         # image = await self.fetch(self._url)
         print(self)
@@ -84,10 +80,9 @@ class Photo:
         # 开线程保存到文件
         # await self._session.loop.run_in_executor(None, self.save, image)
 
-    async def fetch(self, url):
-        with async_timeout.timeout(TIMEOUT):
-            async with self._session.get(url) as response:
-                return await response.read()
+    # 异步获取页面内容
+    def fetch(self, url):
+        return self._session.get(url).text
 
     def save(self, image):
         path = self._path + '\\' + self._id + '.jpg'
@@ -98,8 +93,9 @@ class Photo:
         return '<Photo(id={} url={})>'.format(self._id, self._url)
 
 
-class Album:
+class Album(gevent.Greenlet):
     def __init__(self, id, name, user_id, user_name, location, *, session):
+        super(Album, self).__init__()
         self._id = id
         self._user_id = user_id
         self._name = name
@@ -108,32 +104,28 @@ class Album:
         self._photos = []
         self._session = session
 
-    def __await__(self):
-        return self.done().__await__()
-
-    async def done(self):
+    def _run(self):
         # 异步获取照片列表
-        await self.get_photos()
+        self.get_photos()
         print(self)
 
         # 等待照片保存任务完成
-        await asyncio.wait(self._photos)
+        gevent.joinall(self._photos)
 
-    async def get_page_nums(self):
+    def get_page_nums(self):
         # get users list page nums
         photo_list_url = photo_list.format(self._user_id, self._id, FIRST_PAGE)
-        resp = await self.fetch(photo_list_url)
+        resp = self.fetch(photo_list_url)
         return self.parse_page_nums(resp)
 
-    async def get_photo_by_page(self, page):
+    def get_photo_by_page(self, page):
         photo_list_url = photo_list.format(self._user_id, self._id, page)
-        resp = await self.fetch(photo_list_url)
+        resp = self.fetch(photo_list_url)
         return self.parse_photo_url(resp)
 
-    async def fetch(self, url):
-        with async_timeout.timeout(TIMEOUT):
-            async with self._session.get(url) as response:
-                return await response.text()
+    # 异步获取页面内容
+    def fetch(self, url):
+        return self._session.get(url).text
 
     @staticmethod
     def parse_page_nums(resp):
@@ -157,58 +149,56 @@ class Album:
             photo_items.append(photo)
         return photo_items
 
-    async def get_photos(self):
+    def get_photos(self):
         # 获取照片页面数
-        pages = await self.get_page_nums()
+        pages = self.get_page_nums()
 
         # 获取照片列表
-        tasks = [self.get_photo_by_page(page + 1) for page in range(min(MAX_PHOTO_PAGE, pages))]
-        for task in asyncio.as_completed(tasks):
-            photo_items = await task
-            for photo in photo_items:
-                self._photos.append(asyncio.ensure_future(photo))
+        tasks = [gevent.spawn(self.get_photo_by_page, page + 1) for page in range(min(MAX_PHOTO_PAGE, pages))]
+        for task in gevent.iwait(tasks):
+            photo_objs = task.get()
+            for photo in photo_objs:
+                photo.start()
+                self._photos.append(photo)
 
     def __repr__(self):
         return '<Album(id={} name={} user={})>'.format(self._id, self._name, self._user_name)
 
 
-class User:
+class User(gevent.Greenlet):
     def __init__(self, id, *, session):
+        super(User, self).__init__()
         self._id = id
         self._name = ''
         self._location = ''
         self._albums = []
         self._session = session
 
-    def __await__(self):
-        return self.done().__await__()
-
-    async def done(self):
+    def _run(self):
         # 获取用户信息
-        await self.get_info()
+        self.get_info()
         print(self)
 
-        # 异步获取相册列表
-        await self.get_albums()
+        # 获取相册
+        self.get_albums()
 
-        # 等待相册任务完成
-        await asyncio.wait(self._albums)
+        # 等待完成
+        gevent.joinall(self._albums)
 
-    async def get_page_nums(self):
+    def get_page_nums(self):
         # get users list page nums
         album_list_url = album_list.format(self._id, FIRST_PAGE)
-        resp = await self.fetch(album_list_url)
+        resp = self.fetch(album_list_url)
         return self.parse_page_nums(resp)
 
-    async def get_album_by_page(self, page):
+    def get_album_by_page(self, page):
         album_list_url = album_list.format(self._id, page)
-        resp = await self.fetch(album_list_url)
+        resp = self.fetch(album_list_url)
         return self.parse_album_id(resp)
 
-    async def fetch(self, url):
-        with async_timeout.timeout(TIMEOUT):
-            async with self._session.get(url) as response:
-                return await response.text()
+    # 异步获取页面内容
+    def fetch(self, url):
+        return self._session.get(url).text
 
     @staticmethod
     def parse_page_nums(resp):
@@ -242,81 +232,77 @@ class User:
                 album_items.append(album)
         return album_items
 
-    async def get_info(self):
+    def get_info(self):
         user_info_url = user_info.format(self._id)
-        resp = await self.fetch(user_info_url)
+        resp = self.fetch(user_info_url)
         self.parse_user_info(resp)
 
-    async def get_albums(self):
+    def get_albums(self):
         # 获取相册页面数
-        pages = await self.get_page_nums()
+        pages = self.get_page_nums()
 
         # 获取相册列表
-        tasks = [self.get_album_by_page(page + 1) for page in range(min(MAX_ALBUM_PAGE, pages))]
-        for task in asyncio.as_completed(tasks):
-            album_items = await task
-            for album in album_items:
-                self._albums.append(asyncio.ensure_future(album))
+        tasks = [gevent.spawn(self.get_album_by_page, page + 1) for page in range(min(MAX_ALBUM_PAGE, pages))]
+        for task in gevent.iwait(tasks):
+            album_objs = task.get()
+            for album in album_objs:
+                album.start()
+                self._albums.append(album)
 
     def __repr__(self):
         return '<User(id={} name={})>'.format(self._id, self._name)
 
 
-class Manager:
-    def __init__(self, _loop):
+class Manager(gevent.Greenlet):
+    def __init__(self):
+        super(Manager, self).__init__()
         self._users = []
-        self._loop = _loop
-        self._session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=CONCURRENT_LEVEL))
+        self._session = requests.Session()
 
-    def __await__(self):
-        return self.done().__await__()
-
-    async def done(self):
-        # 异步等待获取用户ID
+    def _run(self):
+        # 创建User's Greenlet对象
         with timer('get_users'):
-            await self.get_users()
+            self.get_users()
 
-        print(self)
-
-        # 等待用户任务完成
+        # 等待完成
         with timer('join_users'):
-            await asyncio.wait(self._users)
+            gevent.joinall(self._users)
 
-        # 异步关闭session
-        await self._session.close()
+        # 关闭session
+        self._session.close()
 
-    async def get_user_pages(self):
+    def get_user_pages(self):
         # 第一页的用户页面URL
         user_list_url = user_list.format(FIRST_PAGE)
 
         # 异步获取页面内容并返回页数
-        resp = await self.fetch(user_list_url)
+        resp = self.fetch(user_list_url)
         return self.parse_page_nums(resp)
 
-    async def get_user_by_page(self, page):
+    def get_user_by_page(self, page):
         # 第N页的用户页面URL
         user_list_url = user_list.format(page)
 
         # 异步获取页面内容并返回页数
-        resp = await self.fetch(user_list_url)
+        resp = self.fetch(user_list_url)
         return self.parse_user_id(resp)
 
-    async def get_users(self):
+    def get_users(self):
         # 获取用户页数
-        pages = await self.get_user_pages()
+        pages = self.get_user_pages()
 
         # 获取用户列表
-        tasks = [self.get_user_by_page(page + 1) for page in range(min(MAX_USER_PAGE, pages))]
-        for task in asyncio.as_completed(tasks):
-            user_ids = await task
+        tasks = [gevent.spawn(self.get_user_by_page, page + 1) for page in range(min(MAX_USER_PAGE, pages))]
+        for task in gevent.iwait(tasks):
+            user_ids = task.get()
             for user_id in user_ids:
-                self._users.append(asyncio.ensure_future(User(user_id, session=self._session)))
+                user = User(user_id, session=self._session)
+                user.start()
+                self._users.append(user)
 
     # 异步获取页面内容
-    async def fetch(self, url):
-        with async_timeout.timeout(TIMEOUT):
-            async with self._session.get(url) as response:
-                return await response.text()
+    def fetch(self, url):
+        return self._session.get(url).text
 
     @staticmethod
     def parse_page_nums(content):
@@ -334,12 +320,10 @@ class Manager:
 
 
 if __name__ == '__main__':
-    # 获取消息循环
-    loop = asyncio.get_event_loop()
-
     # 计时
     with timer('main'):
-        manager = Manager(loop)
-        loop.run_until_complete(manager)
-    loop.close()
+        manager = Manager()
+        manager.start()
+        gevent.joinall([manager])
+
     print('{} photos fetched.'.format(Photo.g_count))
