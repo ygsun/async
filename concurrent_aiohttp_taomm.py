@@ -17,7 +17,8 @@ import aiohttp
 import asyncio
 import async_timeout
 import time
-import sys
+import logging
+import argparse
 
 from bs4 import BeautifulSoup
 
@@ -29,15 +30,6 @@ TIMEOUT = 60
 
 # session TCP连接数
 CONCURRENT_LEVEL = 20
-
-# 需要抓取的最大用户页数
-MAX_USER_PAGE = 2
-
-# 需要抓取的最大相册页数
-MAX_ALBUM_PAGE = 2
-
-# 需要抓取的最大照片页数
-MAX_PHOTO_PAGE = 2
 
 # 淘女郎列表页面
 user_list = 'https://mm.taobao.com/json/request_top_list.htm?page={}'
@@ -52,11 +44,30 @@ album_list = 'https://mm.taobao.com/self/album/open_album_list.htm?user_id={}&pa
 photo_list = 'https://mm.taobao.com/album/json/get_album_photo_list.htm?user_id={}&album_id={}&page={}'
 
 
+def cli():
+    # setting argparser
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-u', '--user', type=int, default=1, help='Max user page to fetch.')
+    parser.add_argument('-a', '--album', type=int, default=1, help='Max album page to fetch.')
+    parser.add_argument('-p', '--photo', type=int, default=1, help='Max photo page to fetch.')
+    parser.add_argument('-d', '--download', action='store_true', default=False, help='Download photos from url.')
+    parser.add_argument('-l', '--loglevel', default='INFO', help='Loglevel [DEBUG | INFO | ERROR]. Default: NOTSET')
+    args = parser.parse_args()
+
+    # setting logging configuration
+    numeric_level = getattr(logging, args.loglevel.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError('Invalid log level: %s' % args.loglevel)
+    logging.basicConfig(style='{', format='{asctime} {levelname} {funcName} {msg}', level=numeric_level)
+
+    return args
+
+
 @contextlib.contextmanager
 def timer(title='default'):
     start = time.time()
     yield
-    print('{}::{:.3f}s'.format(title, time.time() - start))
+    logging.info('{}::{:.3f}s'.format(title, time.time() - start))
 
 
 class Photo:
@@ -76,13 +87,15 @@ class Photo:
         return self.done().__await__()
 
     async def done(self):
-        # 获取image内容
-        # image = await self.fetch(self._url)
-        print(self)
-        Photo.g_count += 1
+        if args.download:
+            # 获取image内容
+            image = await self.fetch(self._url)
 
-        # 开线程保存到文件
-        # await self._session.loop.run_in_executor(None, self.save, image)
+            # 开线程保存到文件
+            await self._session.loop.run_in_executor(None, self.save, image)
+
+        logging.debug(self)
+        Photo.g_count += 1
 
     async def fetch(self, url):
         with async_timeout.timeout(TIMEOUT):
@@ -114,7 +127,7 @@ class Album:
     async def done(self):
         # 异步获取照片列表
         await self.get_photos()
-        print(self)
+        logging.debug(self)
 
         # 等待照片保存任务完成
         await asyncio.wait(self._photos)
@@ -162,7 +175,7 @@ class Album:
         pages = await self.get_page_nums()
 
         # 获取照片列表
-        tasks = [self.get_photo_by_page(page + 1) for page in range(min(MAX_PHOTO_PAGE, pages))]
+        tasks = [self.get_photo_by_page(page + 1) for page in range(min(args.photo, pages))]
         for task in asyncio.as_completed(tasks):
             photo_items = await task
             for photo in photo_items:
@@ -186,7 +199,7 @@ class User:
     async def done(self):
         # 获取用户信息
         await self.get_info()
-        print(self)
+        logging.debug(self)
 
         # 异步获取相册列表
         await self.get_albums()
@@ -252,7 +265,7 @@ class User:
         pages = await self.get_page_nums()
 
         # 获取相册列表
-        tasks = [self.get_album_by_page(page + 1) for page in range(min(MAX_ALBUM_PAGE, pages))]
+        tasks = [self.get_album_by_page(page + 1) for page in range(min(args.album, pages))]
         for task in asyncio.as_completed(tasks):
             album_items = await task
             for album in album_items:
@@ -273,14 +286,12 @@ class Manager:
 
     async def done(self):
         # 异步等待获取用户ID
-        with timer('get_users'):
-            await self.get_users()
+        await self.get_users()
 
-        print(self)
+        logging.debug(self)
 
         # 等待用户任务完成
-        with timer('join_users'):
-            await asyncio.wait(self._users)
+        await asyncio.wait(self._users)
 
         # 异步关闭session
         await self._session.close()
@@ -306,7 +317,7 @@ class Manager:
         pages = await self.get_user_pages()
 
         # 获取用户列表
-        tasks = [self.get_user_by_page(page + 1) for page in range(min(MAX_USER_PAGE, pages))]
+        tasks = [self.get_user_by_page(page + 1) for page in range(min(args.user, pages))]
         for task in asyncio.as_completed(tasks):
             user_ids = await task
             for user_id in user_ids:
@@ -334,6 +345,9 @@ class Manager:
 
 
 if __name__ == '__main__':
+    # 获取命令行参数
+    args = cli()
+
     # 获取消息循环
     loop = asyncio.get_event_loop()
 
@@ -342,4 +356,4 @@ if __name__ == '__main__':
         manager = Manager(loop)
         loop.run_until_complete(manager)
     loop.close()
-    print('{} photos fetched.'.format(Photo.g_count))
+    logging.info('{} photos fetched.'.format(Photo.g_count))

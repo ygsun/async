@@ -16,20 +16,13 @@ import re
 import requests
 import time
 import json
+import argparse
+import logging
 
 from bs4 import BeautifulSoup
 
 # 第一页
 FIRST_PAGE = 1
-
-# 需要抓取的最大用户页数
-MAX_USER_PAGE = 1
-
-# 需要抓取的最大相册页数
-MAX_ALBUM_PAGE = 1
-
-# 需要抓取的最大照片页数
-MAX_PHOTO_PAGE = 1
 
 # 淘女郎列表页面
 user_list = 'https://mm.taobao.com/json/request_top_list.htm?page={}'
@@ -42,6 +35,25 @@ album_list = 'https://mm.taobao.com/self/album/open_album_list.htm?user_id={}&pa
 
 # 淘女郎相册json
 photo_list = 'https://mm.taobao.com/album/json/get_album_photo_list.htm?user_id={}&album_id={}&page={}'
+
+
+def cli():
+    # setting argparser
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-u', '--user', type=int, default=1, help='Max user page to fetch.')
+    parser.add_argument('-a', '--album', type=int, default=1, help='Max album page to fetch.')
+    parser.add_argument('-p', '--photo', type=int, default=1, help='Max photo page to fetch.')
+    parser.add_argument('-d', '--download', action='store_true', default=False, help='Download photos from url.')
+    parser.add_argument('-l', '--loglevel', default='INFO', help='Loglevel [DEBUG | INFO | ERROR]. Default: NOTSET')
+    args = parser.parse_args()
+
+    # setting logging configuration
+    numeric_level = getattr(logging, args.loglevel.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError('Invalid log level: %s' % args.loglevel)
+    logging.basicConfig(style='{', format='{asctime} {levelname} {funcName} {msg}', level=numeric_level)
+
+    return args
 
 
 class Parser(threading.Thread):
@@ -77,11 +89,11 @@ class Photo(threading.Thread):
         os.makedirs(self._path, exist_ok=True)
 
     def run(self):
-        pass
-        # image = self.fetch(self._url)
-        print(self)
+        if args.download:
+            image = self.fetch(self._url)
+            self.save(image)
+        logging.debug(self)
         Photo.g_count += 1
-        # self.save(image)
 
     def fetch(self, url):
         r = self._session.get(url)
@@ -148,20 +160,7 @@ class Album(threading.Thread):
         # 获取照片页面数
         pages = self.get_page_nums()
 
-        # 获取照片列表
-        # tasks = []
-        # for page in range(min(MAX_PHOTO_PAGE, pages)):
-        #     parser = Parser(self.get_photo_by_page, page + 1)
-        #     tasks.append(parser)
-        #     parser.start()
-        #
-        # for parser in tasks:
-        #     parser.join()
-        #     for photo in parser.result():
-        #         self._photos.append(photo)
-        #         photo.start()
-
-        for page in range(min(MAX_PHOTO_PAGE, pages)):
+        for page in range(min(args.photo, pages)):
             photo_items = self.get_photo_by_page(page + 1)
             for photo in photo_items:
                 self._photos.append(photo)
@@ -170,7 +169,7 @@ class Album(threading.Thread):
     def run(self):
         # 获取照片列表
         self.get_photos()
-        print(self)
+        logging.debug(self)
 
         # 等待照片保存任务完成
         for photo in self._photos:
@@ -245,20 +244,7 @@ class User(threading.Thread):
         # 获取相册页面数
         pages = self.get_page_nums()
 
-        # 获取相册列表
-        # tasks = []
-        # for page in range(min(MAX_ALBUM_PAGE, pages)):
-        #     parser = Parser(self.get_album_by_page, page + 1)
-        #     tasks.append(parser)
-        #     parser.start()
-        #
-        # for parser in tasks:
-        #     parser.join()
-        #     for album in parser.result():
-        #         self._albums.append(album)
-        #         album.start()
-
-        for page in range(min(MAX_ALBUM_PAGE, pages)):
+        for page in range(min(args.album, pages)):
             album_items = self.get_album_by_page(page + 1)
             for album in album_items:
                 self._albums.append(album)
@@ -267,7 +253,7 @@ class User(threading.Thread):
     def run(self):
         # 获取用户信息
         self.get_info()
-        print(self)
+        logging.debug(self)
 
         # 获取相册列表
         self.get_albums()
@@ -306,20 +292,7 @@ class Manager(threading.Thread):
         # 获取用户页数
         pages = self.get_user_pages()
 
-        # 获取用户列表
-        # tasks = []
-        # for page in range(min(MAX_USER_PAGE, pages)):
-        #     parser = Parser(self.get_user_by_page, page + 1)
-        #     tasks.append(parser)
-        #     parser.start()
-        #
-        # for parser in tasks:
-        #     parser.join()
-        #     for user in parser.result():
-        #         self._users.append(user)
-        #         user.start()
-
-        for page in range(min(MAX_USER_PAGE, pages)):
+        for page in range(min(args.user, pages)):
             user_items = self.get_user_by_page(page + 1)
             for user in user_items:
                 self._users.append(user)
@@ -349,7 +322,7 @@ class Manager(threading.Thread):
     def run(self):
         # 等待获取用户ID
         self.get_users()
-        print(self)
+        logging.debug(self)
 
         # 等待用户任务完成
         for user in self._users:
@@ -366,12 +339,14 @@ class Manager(threading.Thread):
 def timer():
     start = time.time()
     yield
-    print('run in {:.1f} seconds'.format(time.time() - start))
+    logging.info('run in {:.1f} seconds'.format(time.time() - start))
 
 
 if __name__ == '__main__':
+    args = cli()
+
     with timer():
         manager = Manager()
         manager.start()
         manager.join()
-    print('{} photos fetched.'.format(Photo.g_count))
+    logging.info('{} photos fetched.'.format(Photo.g_count))

@@ -22,20 +22,13 @@ import os
 import re
 import json
 import time
+import logging
+import argparse
 
 from bs4 import BeautifulSoup
 
 # 第一页
 FIRST_PAGE = 1
-
-# 需要抓取的最大用户页数
-MAX_USER_PAGE = 2
-
-# 需要抓取的最大相册页数
-MAX_ALBUM_PAGE = 2
-
-# 需要抓取的最大照片页数
-MAX_PHOTO_PAGE = 2
 
 # 淘女郎列表页面
 user_list = 'https://mm.taobao.com/json/request_top_list.htm?page={}'
@@ -50,11 +43,30 @@ album_list = 'https://mm.taobao.com/self/album/open_album_list.htm?user_id={}&pa
 photo_list = 'https://mm.taobao.com/album/json/get_album_photo_list.htm?user_id={}&album_id={}&page={}'
 
 
+def cli():
+    # setting argparser
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-u', '--user', type=int, default=1, help='Max user page to fetch.')
+    parser.add_argument('-a', '--album', type=int, default=1, help='Max album page to fetch.')
+    parser.add_argument('-p', '--photo', type=int, default=1, help='Max photo page to fetch.')
+    parser.add_argument('-d', '--download', action='store_true', default=False, help='Download photos from url.')
+    parser.add_argument('-l', '--loglevel', default='INFO', help='Loglevel [DEBUG | INFO | ERROR]. Default: NOTSET')
+    args = parser.parse_args()
+
+    # setting logging configuration
+    numeric_level = getattr(logging, args.loglevel.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError('Invalid log level: %s' % args.loglevel)
+    logging.basicConfig(style='{', format='{asctime} {levelname} {funcName} {msg}', level=numeric_level)
+
+    return args
+
+
 @contextlib.contextmanager
 def timer(title='default'):
     start = time.time()
     yield
-    print('{}::{:.3f}s'.format(title, time.time() - start))
+    logging.info('{}::{:.3f}s'.format(title, time.time() - start))
 
 
 class Photo(gevent.Greenlet):
@@ -72,13 +84,14 @@ class Photo(gevent.Greenlet):
         os.makedirs(self._path, exist_ok=True)
 
     def _run(self):
-        # 获取image内容
-        # image = await self.fetch(self._url)
-        print(self)
-        Photo.g_count += 1
+        if args.download:
+            # 获取image内容
+            image = self.fetch(self._url)
+            # 开线程保存到文件
+            self.save(image)
+        logging.debug(self)
 
-        # 开线程保存到文件
-        # await self._session.loop.run_in_executor(None, self.save, image)
+        Photo.g_count += 1
 
     # 异步获取页面内容
     def fetch(self, url):
@@ -107,7 +120,7 @@ class Album(gevent.Greenlet):
     def _run(self):
         # 异步获取照片列表
         self.get_photos()
-        print(self)
+        logging.debug(self)
 
         # 等待照片保存任务完成
         gevent.joinall(self._photos)
@@ -154,7 +167,7 @@ class Album(gevent.Greenlet):
         pages = self.get_page_nums()
 
         # 获取照片列表
-        tasks = [gevent.spawn(self.get_photo_by_page, page + 1) for page in range(min(MAX_PHOTO_PAGE, pages))]
+        tasks = [gevent.spawn(self.get_photo_by_page, page + 1) for page in range(min(args.photo, pages))]
         for task in gevent.iwait(tasks):
             photo_objs = task.get()
             for photo in photo_objs:
@@ -177,7 +190,7 @@ class User(gevent.Greenlet):
     def _run(self):
         # 获取用户信息
         self.get_info()
-        print(self)
+        logging.debug(self)
 
         # 获取相册
         self.get_albums()
@@ -242,7 +255,7 @@ class User(gevent.Greenlet):
         pages = self.get_page_nums()
 
         # 获取相册列表
-        tasks = [gevent.spawn(self.get_album_by_page, page + 1) for page in range(min(MAX_ALBUM_PAGE, pages))]
+        tasks = [gevent.spawn(self.get_album_by_page, page + 1) for page in range(min(args.album, pages))]
         for task in gevent.iwait(tasks):
             album_objs = task.get()
             for album in album_objs:
@@ -261,12 +274,10 @@ class Manager(gevent.Greenlet):
 
     def _run(self):
         # 创建User's Greenlet对象
-        with timer('get_users'):
-            self.get_users()
+        self.get_users()
 
         # 等待完成
-        with timer('join_users'):
-            gevent.joinall(self._users)
+        gevent.joinall(self._users)
 
         # 关闭session
         self._session.close()
@@ -292,7 +303,7 @@ class Manager(gevent.Greenlet):
         pages = self.get_user_pages()
 
         # 获取用户列表
-        tasks = [gevent.spawn(self.get_user_by_page, page + 1) for page in range(min(MAX_USER_PAGE, pages))]
+        tasks = [gevent.spawn(self.get_user_by_page, page + 1) for page in range(min(args.user, pages))]
         for task in gevent.iwait(tasks):
             user_ids = task.get()
             for user_id in user_ids:
@@ -320,10 +331,13 @@ class Manager(gevent.Greenlet):
 
 
 if __name__ == '__main__':
+    # 获取命令行参数
+    args = cli()
+
     # 计时
     with timer('main'):
         manager = Manager()
         manager.start()
         gevent.joinall([manager])
 
-    print('{} photos fetched.'.format(Photo.g_count))
+    logging.info('{} photos fetched.'.format(Photo.g_count))
